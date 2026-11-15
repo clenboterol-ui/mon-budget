@@ -77,6 +77,13 @@ button{cursor:pointer}
 .badge.ok{color:var(--good)}
 .badge.late{color:var(--bad)}
 .pay{border:1px solid var(--line);background:var(--surface);border-radius:8px;font-size:12px;font-weight:600;padding:4px 8px;margin-top:4px}
+.acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.acts .pay{margin-top:0;text-decoration:none;color:var(--ink);cursor:pointer}
+.row{cursor:pointer}
+.alert{border:1px solid var(--bad);border-radius:14px;padding:10px 12px;font-size:14px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
+.alert b{color:var(--bad)}
+.check{display:flex;align-items:center;gap:10px;font-size:14px}
+.check input{width:20px;height:20px;flex:none}
 .empty{color:var(--muted);font-size:14px;padding:6px}
 .clear{border:0;background:var(--chip);border-radius:8px;font-size:12px;font-weight:600;padding:4px 8px}
 .add{position:fixed;left:0;right:0;bottom:0;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:linear-gradient(to top,var(--bg) 70%,transparent);display:flex;justify-content:center}
@@ -143,6 +150,8 @@ td.z{color:var(--muted)}
 <div class="field"><label for="f-label">Description (facultatif)</label><input id="f-label" maxlength="60" placeholder="ex. Courses de la semaine"></div>
 <div class="field"><label for="f-date" id="f-date-lab">Date</label><input id="f-date" type="date"></div>
 </div>
+<label class="check" id="f-next-wrap" hidden><input type="checkbox" id="f-next"><span>Compter ce revenu pour le mois suivant (salaire reçu en fin de mois)</span></label>
+<div class="field" id="f-url-wrap" hidden><label for="f-url">Lien pour payer ou rembourser (facultatif)</label><input id="f-url" type="url" inputmode="url" placeholder="https://…"></div>
 <div class="err" id="f-err" role="alert"></div>
 <div class="actions">
 <button type="button" class="del" id="f-del" hidden>Supprimer</button>
@@ -336,6 +345,21 @@ if (S.slow) notes.push("Vos données n'ont pas encore pu être chargées.");
 $("note").hidden = !notes.length; $("note").textContent = notes.join(" ");
 $("view").innerHTML = S.tab === "year" ? yearView() : monthView();
 }
+const safeUrl = u => /^https?:\/\//i.test(u || "") ? u : "";
+const payLink = it => safeUrl(it.u) ? `<a class="pay" href="${esc(it.u)}" target="_blank" rel="noopener">Payer ↗</a>` : "";
+function icsHref(it) {
+const day = it.d.replace(/-/g, ""), n = new Date(it.d + "T12:00:00"); n.setDate(n.getDate() + 1);
+const end = iso(n).replace(/-/g, ""), txt = s => String(s).replace(/[\\;,]/g, " ").replace(/\s+/g, " ");
+const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Mon budget//FR", "BEGIN:VEVENT", "UID:" + it.id + "@mon-budget", "DTSTAMP:" + day + "T080000Z", "DTSTART;VALUE=DATE:" + day, "DTEND;VALUE=DATE:" + end, "SUMMARY:" + txt("À payer : " + (it.t || it.c) + " (" + eur.format(it.a) + ")"), "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Paiement à faire", "TRIGGER:-P1D", "END:VALARM", "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+return "data:text/calendar;charset=utf-8," + encodeURIComponent(ics);
+}
+function dueSoon() {
+const out = [];
+if (S.demo) return out;
+const lim = new Date(); lim.setDate(lim.getDate() + 3); const max = iso(lim);
+for (const ym in S.months) for (const it of S.months[ym] || []) if (it.k === "p" && !it.p && it.d <= max) out.push(it);
+return out.sort((a, b) => a.d < b.d ? -1 : 1);
+}
 function monthView() {
 const items = itemsOf(S.ym), r = compute(items), cur = S.ym === ymOf(today());
 const carry = S.demo ? 0 : carryInto(S.ym, S.months), left = r.left + carry;
@@ -361,14 +385,15 @@ const inc = it.k === "r", c = colorOf(it.c, inc ? INCOME : CATS), dt = new Date(
 let badge = "", pay = "";
 if (it.k === "p") {
 if (it.p) badge = `<span class="badge ok">payé</span>`;
-else { badge = it.d < today() ? `<span class="badge late">en retard</span>` : `<span class="badge">à venir</span>`; pay = `<br><span class="pay" data-pay="${esc(it.id)}" role="button" tabindex="0">Marquer payé</span>`; }
+else { badge = it.d < today() ? `<span class="badge late">en retard</span>` : `<span class="badge">à venir</span>`; pay = `<span class="acts"><button type="button" class="pay" data-pay="${esc(it.id)}">Marquer payé</button>${payLink(it)}<a class="pay" href="${icsHref(it)}" download="rappel-budget.ics">Rappel agenda</a></span>`; }
 }
-return `<button class="row" data-id="${esc(it.id)}" style="--c:${c}"><span class="dot"></span>
-<span><span class="t">${esc(it.t || it.c)}</span>${badge}<br><span class="s">${dt} · ${esc(it.c)}</span>${pay}</span>
-<span class="a${inc ? " in" : ""}">${inc ? "+" : "−"} ${eur.format(it.a)}</span></button>`;
+return `<div class="row" role="button" tabindex="0" data-id="${esc(it.id)}" style="--c:${c}"><span class="dot"></span>
+<span><span class="t">${esc(it.t || it.c)}</span>${badge}<br><span class="s">${dt} · ${esc(it.c)}${it.m ? " · compte pour " + monthName(it.m, {month:"long"}) : ""}</span>${pay}</span>
+<span class="a${inc ? " in" : ""}">${inc ? "+" : "−"} ${eur.format(it.a)}</span></div>`;
 }).join("") : `<div class="empty">Rien pour l'instant. Touchez « + Ajouter ».</div>`;
+const soon = dueSoon(), alertHtml = soon.length ? `<section class="alert"><b>${soon.some(x => x.d < today()) ? "À payer, échéance dépassée" : "À payer bientôt"}</b>${soon.slice(0, 4).map(x => `<div>${esc(x.t || x.c)} · ${eur.format(x.a)} · ${new Date(x.d + "T12:00:00").toLocaleDateString("fr-FR", {day:"numeric", month:"long"})} ${payLink(x)}</div>`).join("")}</section>` : "";
 return `<div style="display:flex;flex-direction:column;gap:14px">
-<section class="hero${left < 0 ? " over" : ""}"><div class="lbl">${left < 0 ? "Budget dépassé" : "Reste à dépenser"}</div><div class="big">${eur.format(left)}</div><div class="sub">${sub}</div></section>
+${alertHtml}<section class="hero${left < 0 ? " over" : ""}"><div class="lbl">${left < 0 ? "Budget dépassé" : "Reste à dépenser"}</div><div class="big">${eur.format(left)}</div><div class="sub">${sub}</div></section>
 <section class="stats"><div class="stat"><div class="k">Revenus</div><div class="v">${eur.format(r.rev)}</div></div><div class="stat"><div class="k">${carry < 0 ? "Manque reporté" : "Économies reportées"}</div><div class="v" style="color:var(${carry < 0 ? "--bad" : "--good"})">${carry > 0 ? "+ " : ""}${eur.format(carry)}</div></div><div class="stat"><div class="k">Dépensé</div><div class="v">${eur.format(r.spent)}</div></div><div class="stat"><div class="k">À venir</div><div class="v">${eur.format(r.due)}</div></div></section>
 <section class="card"><h2>Total par catégorie <small>${eur.format(total)}</small></h2>${catHtml}</section>
 <section class="card"><h2>${S.filter ? esc(S.filter) : "Tout le mois"}${S.filter ? `<button class="clear" id="clear">Tout afficher ×</button>` : ""}</h2><div class="rows">${rows}</div></section></div>`;
@@ -389,6 +414,7 @@ S.edit = it || null; S.kind = it ? it.k : "d"; S.cat = it ? it.c : null;
 $("f-amount").value = it ? String(it.a).replace(".", ",") : "";
 $("f-label").value = it ? (it.t || "") : "";
 $("f-date").value = it ? it.d : (S.ym === ymOf(today()) ? today() : S.ym + "-01");
+$("f-next").checked = !!(it && it.m); $("f-url").value = it ? (it.u || "") : "";
 $("f-del").hidden = !it; $("f-err").textContent = "";
 drawForm(); $("overlay").hidden = false;
 if (!it) setTimeout(() => $("f-amount").focus(), 50);
@@ -400,7 +426,8 @@ document.querySelectorAll("#f-kind button").forEach(b => b.setAttribute("aria-pr
 const list = S.kind === "r" ? INCOME : CATS;
 if (!list.some(c => c[0] === S.cat)) S.cat = S.kind === "r" ? "Salaire" : null;
 $("f-cat-lab").textContent = S.kind === "r" ? "Type de revenu" : "Catégorie";
-$("f-date-lab").textContent = S.kind === "p" ? "Échéance" : "Date";
+$("f-date-lab").textContent = S.kind === "p" ? "Échéance" : S.kind === "r" ? "Reçu le" : "Date";
+$("f-next-wrap").hidden = S.kind !== "r"; $("f-url-wrap").hidden = S.kind !== "p";
 $("f-cats").innerHTML = list.map(c => `<button type="button" data-c="${esc(c[0])}" aria-pressed="${S.cat === c[0]}"><span class="dot" style="--c:${c[1]}"></span>${esc(c[0])}</button>`).join("");
 }
 function closeForm() { $("overlay").hidden = true; S.edit = null; }
@@ -414,12 +441,13 @@ if (!S.cat) { $("f-err").textContent = "Choisissez une catégorie."; return; }
 if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) { $("f-err").textContent = "Choisissez une date."; return; }
 if (S.demo) { S.demo = false; S.months = {}; }
 const it = {id: S.edit ? S.edit.id : Date.now().toString(36) + Math.random().toString(36).slice(2, 6), k:S.kind, d, t:$("f-label").value.trim(), c:S.cat, a};
-if (S.kind === "p") it.p = S.edit ? !!S.edit.p : false;
-const touched = new Set([ymOf(d)]);
+if (S.kind === "p") { it.p = S.edit ? !!S.edit.p : false; const u = $("f-url").value.trim(); if (u) { if (!safeUrl(u)) { $("f-err").textContent = "Le lien doit commencer par https://"; return; } it.u = u; } }
+if (S.kind === "r" && $("f-next").checked) it.m = shift(ymOf(d), 1);
+const home = it.m || ymOf(d), touched = new Set([home]);
 if (S.edit) { const old = removeItem(S.edit.id); if (old) touched.add(old); }
-(S.months[ymOf(d)] || (S.months[ymOf(d)] = [])).push(it);
+(S.months[home] || (S.months[home] = [])).push(it);
 touched.forEach(save);
-S.ym = ymOf(d); S.tab = "month"; closeForm(); render();
+S.ym = home; S.tab = "month"; closeForm(); render();
 }
 /* ---------- gestes ---------- */
 $("prev").onclick = () => { S.ym = shift(S.ym, S.tab === "year" ? -12 : -1); S.filter = null; render(); };
@@ -434,6 +462,7 @@ $("f-kind").onclick = e => { const b = e.target.closest("button"); if (b) { S.ki
 $("f-cats").onclick = e => { const b = e.target.closest("button"); if (b) { S.cat = b.dataset.c; drawForm(); } };
 $("f-del").onclick = () => { if (S.edit) { const ym = removeItem(S.edit.id); if (ym) save(ym); } closeForm(); render(); };
 function viewAction(e) {
+if (e.target.closest("a")) return;
 const pay = e.target.closest("[data-pay]");
 if (pay) { e.stopPropagation(); if (S.demo) return; const it = findItem(pay.dataset.pay); if (it) { it.p = true; save(ymOf(it.d)); render(); } return; }
 if (e.target.closest("#clear")) { S.filter = null; render(); return; }
@@ -443,7 +472,7 @@ const row = e.target.closest("[data-id]");
 if (row && !S.demo && S.mode !== "loading") { const it = findItem(row.dataset.id); if (it) openForm(it); }
 }
 $("view").addEventListener("click", viewAction);
-$("view").addEventListener("keydown", e => { if ((e.key === "Enter" || e.key === " ") && e.target.matches("[data-pay]")) { e.preventDefault(); viewAction(e); } });
+$("view").addEventListener("keydown", e => { if (e.key === "Enter" && e.target.matches(".row")) { e.preventDefault(); viewAction(e); } });
 document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("overlay").hidden) closeForm(); });
 $("syncbar").onclick = e => {
 if (e.target.id === "open-acct") { $("a-err").textContent = ""; $("acct-ov").hidden = false; setTimeout(() => $("a-email").focus(), 50); }
